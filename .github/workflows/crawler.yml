@@ -67,6 +67,7 @@ jobs:
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BARK_URL: ${{ secrets.BARK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           # 运行环境标识
           GITHUB_ACTIONS: true
         run: python main.py

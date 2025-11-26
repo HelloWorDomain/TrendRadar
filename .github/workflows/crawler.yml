@@ -1,54 +1,56 @@
-name: Hot News Crawler
-
+﻿name: Hot News Crawler
 on:
   schedule:
-    # 我们使用的是 github 官方提供的资源来进行的推送，而每个账号的资源是限额的，为了不被官方判定为滥用而面临封号的风险，不建议比半小时更低
-    - cron: "0 1 * * *" # 0 * * * *每小时整点运行一次(实际有偏差) 或者 "*/30 * * * *" (每半小时执行一次) 或者 "*/30 0-14 * * *"(每天早上 8 点到晚上 10 点期间，每半小时运行一次)
+    # 鎴戜滑浣跨敤鐨勬槸 github 瀹樻柟鎻愪緵鐨勮祫婧愭潵杩涜鐨勬帹閫侊紝鑰屾瘡涓处鍙风殑璧勬簮鏄檺棰濈殑锛屼负浜嗕笉琚畼鏂瑰垽瀹氫负婊ョ敤鑰岄潰涓村皝鍙风殑椋庨櫓锛屼笉寤鸿姣斿崐灏忔椂鏇翠綆
+    - cron: "0 1 * * *" # 0 * * * *姣忓皬鏃舵暣鐐硅繍琛屼竴娆?瀹為檯鏈夊亸宸? 鎴栬€?"*/30 * * * *" (姣忓崐灏忔椂鎵ц涓€娆? 鎴栬€?"*/30 0-14 * * *"(姣忓ぉ鏃╀笂 8 鐐瑰埌鏅氫笂 10 鐐规湡闂达紝姣忓崐灏忔椂杩愯涓€娆?
   workflow_dispatch:
 
-# 添加权限设置
+concurrency:
+  group: crawler-main-branch
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
 jobs:
   crawl:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-
+        with:
+          ref: main
+          fetch-depth: 0
+          clean: true
+          
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
-
+          
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
+          
       - name: Verify required files
         run: |
-          echo "🔍 检查必需的配置文件..."
-
+          echo "馃攳 妫€鏌ュ繀闇€鐨勯厤缃枃浠?.."
           if [ ! -f config/config.yaml ]; then
-            echo "❌ 错误: config/config.yaml 文件不存在"
-            echo "请参考项目文档创建配置文件"
+            echo "鉂?閿欒: config/config.yaml 鏂囦欢涓嶅瓨鍦?
             exit 1
           fi
-
           if [ ! -f config/frequency_words.txt ]; then
-            echo "❌ 错误: config/frequency_words.txt 文件不存在"
-            echo "请参考项目文档创建频率词配置文件"
+            echo "鉂?閿欒: config/frequency_words.txt 鏂囦欢涓嶅瓨鍦?
             exit 1
           fi
-
-          echo "✅ 配置文件检查通过"
-
+          echo "鉁?閰嶇疆鏂囦欢妫€鏌ラ€氳繃"
+          
       - name: Run crawler
         env:
-          # 通知渠道配置
+          # 閫氱煡娓犻亾閰嶇疆
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -63,18 +65,52 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_SERVER_URL: ${{ secrets.NTFY_SERVER_URL }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
-          # AI 智能搜索 API 密钥（可选，启用 AI 搜索时需要）
+          # AI 鏅鸿兘鎼滅储 API 瀵嗛挜锛堝彲閫夛紝鍚敤 AI 鎼滅储鏃堕渶瑕侊級
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BARK_URL: ${{ secrets.BARK_URL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          # 运行环境标识
+          # 杩愯鐜鏍囪瘑
           GITHUB_ACTIONS: true
         run: python main.py
-
+        
       - name: Commit and push if changes
         run: |
           git config --global user.name 'GitHub Actions'
           git config --global user.email 'actions@github.com'
+          
+          echo "馃攧 Syncing with remote..."
+          git fetch origin main
+          
+          # 淇濆瓨褰撳墠鏇存敼
+          git stash --include-untracked || echo "Nothing to stash"
+          
+          # 鍚屾鍒拌繙绋嬫渶鏂?
+          git reset --hard origin/main
+          
+          # 鎭㈠鏈鏇存敼
+          git stash pop || echo "Nothing to pop"
+          
           git add -A
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update by GitHub Actions at $(TZ=Asia/Shanghai date)" && git push)
+          
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "馃摥 No changes to commit"
+            exit 0
+          fi
+          
+          echo "馃摑 Committing changes..."
+          TIMESTAMP=$(TZ=Asia/Shanghai date "+%Y-%m-%d %H:%M:%S")
+          git commit -m "Auto update by GitHub Actions at $TIMESTAMP"
+          
+          echo "猬嗭笍 Pushing changes with retry..."
+          for i in {1..5}; do
+            git pull --rebase origin main && git push origin main && {
+              echo "鉁?Successfully pushed on attempt $i"
+              exit 0
+            }
+            echo "鈿狅笍 Attempt $i/$i failed, waiting $((i*3)) seconds..."
+            sleep $((i * 3))
+          done
+          
+          echo "鉂?Failed to push after 5 attempts"
+          exit 1
